@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model name="" userDefinedModelVersionIdentifier="" type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="22618" systemVersion="24A5326a" minimumToolsVersion="Xcode 4.3" macOSVersion="15.0" iOSVersion="18.0">
+    <entity name="Location" representedClassName="Location" syncable="YES">
+        <attribute name="latitude" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="longitude" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="needsSync" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name of="timestamp" attributeType="Date"/>
+    </entity>
+</model>
