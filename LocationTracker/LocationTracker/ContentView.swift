@@ -100,8 +100,15 @@ struct ContentView: View {
 
     private func addItem() {
         withAnimation {
+            guard let location = locationManager.currentLocation else {
+                print("Warning: Current location is not available.")
+                return
+            }
+            
             let newItem = Item(context: viewContext)
             newItem.timestamp = Date()
+            newItem.latitude = location.coordinate.latitude
+            newItem.longitude = location.coordinate.longitude
 
             do {
                 try viewContext.save()

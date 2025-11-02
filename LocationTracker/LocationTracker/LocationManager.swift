@@ -10,6 +10,7 @@ import CoreLocation
 import CoreData
 
 class LocationManager: NSObject, ObservableObject {
+    @Published var currentLocation: CLLocation?
     private let locationManager = CLLocationManager()
     private var viewContext: NSManagedObjectContext
     private var lastLocation: CLLocation?
@@ -42,7 +43,7 @@ class LocationManager: NSObject, ObservableObject {
     }
     
     func requestLocationPermission() {
-        locationManager.requestWhenInUseAuthorization()
+        locationManager.requestAlwaysAuthorization()
     }
     
     func startTracking() {
@@ -64,6 +65,9 @@ class LocationManager: NSObject, ObservableObject {
     }
     
     private func startPeriodicSampling() {
+        
+        timer?.invalidate()
+        
         timer = Timer.scheduledTimer(withTimeInterval: currentSamplingInterval, repeats: true) { _ in
             self.sampleLocation()
         }
@@ -138,6 +142,7 @@ extension LocationManager: CLLocationManagerDelegate {
         // This is called when location updates are available
         // We're using our own periodic sampling, so we don't need to do anything here
         // unless we want to use these updates for something else
+        currentLocation = locations.last
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

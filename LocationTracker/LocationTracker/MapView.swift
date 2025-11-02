@@ -102,6 +102,24 @@ struct MapView: View {
         }
         .onAppear {
             updateFetchRequest(for: selectedDate)
+            
+            let fetchRequest: NSFetchRequest<Item> = Item.fetchRequest()
+            fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \Item.timestamp, ascending: false)]
+            fetchRequest.fetchLimit = 1
+            
+            do {
+                let items = try viewContext.fetch(fetchRequest)
+                if let mostRecentItem = items.first {
+                    region.center = CLLocationCoordinate2D(latitude: mostRecentItem.latitude, longitude: mostRecentItem.longitude)
+                }
+            } catch {
+                print("Failed to fetch most recent item for map region: \(error)")
+            }
+        }
+        .onChange(of: locationItems.count) {
+            if let firstItem = locationItems.first {
+                region.center = CLLocationCoordinate2D(latitude: firstItem.latitude, longitude: firstItem.longitude)
+            }
         }
     }
     
