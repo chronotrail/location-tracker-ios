@@ -23,6 +23,16 @@ class LocationManager: NSObject, ObservableObject {
     private let distanceThreshold: CLLocationDistance = 10 // 10 meters
     private let timeThreshold: TimeInterval = 60 // 1 minute
     
+    @Published var isTrackingEnabled: Bool = true {
+        didSet {
+            if isTrackingEnabled {
+                startTracking()
+            } else {
+                stopTracking()
+            }
+        }
+    }
+
     init(viewContext: NSManagedObjectContext) {
         self.viewContext = viewContext
         super.init()
@@ -36,6 +46,7 @@ class LocationManager: NSObject, ObservableObject {
     }
     
     func startTracking() {
+        guard isTrackingEnabled else { return }
         switch locationManager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
             locationManager.startUpdatingLocation()

@@ -35,22 +35,37 @@ struct MapView: View {
             Map(coordinateRegion: $region, annotationItems: locationItems) { item in
                 // Once latitude and longitude properties are added to Item,
                 // this will show actual location data
-                #if canImport(CoreData)
+#if canImport(CoreData)
                 // Check if the Item entity has latitude and longitude properties
-                if item.responds(to: #selector(getter: Item.latitude)) && 
-                   item.responds(to: #selector(getter: Item.longitude)) {
+                if item.responds(to: #selector(getter: Item.latitude)) &&
+                    item.responds(to: #selector(getter: Item.longitude)) {
                     // Use actual location data
-                    MapMarker(coordinate: CLLocationCoordinate2D(latitude: item.latitude, longitude: item.longitude), 
-                             tint: .red)
+                    MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: item.latitude, longitude: item.longitude)) {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 8, height: 8)
+                    }
+                    // MapMarker(coordinate: CLLocationCoordinate2D(latitude: item.latitude, longitude: item.longitude),
+                    //         tint: .red)
                 } else {
                     // Fallback to hardcoded coordinates
-                    MapMarker(coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194), 
-                             tint: .red)
+                    MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)) {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 8, height: 8)
+                    }
+                    //MapMarker(coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+                    //         tint: .red)
                 }
-                #else
-                MapMarker(coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194), 
-                         tint: .red)
-                #endif
+#else
+                MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)) {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 8, height: 8)
+                }
+                // MapMarker(coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+                //         tint: .red)
+#endif
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             

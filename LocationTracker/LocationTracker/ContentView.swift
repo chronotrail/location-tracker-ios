@@ -18,6 +18,7 @@ struct ContentView: View {
     private var items: FetchedResults<Item>
     
     @State private var selectedView: Int = 0 // 0 = Map View, 1 = Raw Data View
+    @State private var showingSettings: Bool = false
 
     var body: some View {
         NavigationView {
@@ -68,6 +69,13 @@ struct ContentView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: {
+                        showingSettings = true
+                    }) {
+                        Image(systemName: "gear")
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     EditButton()
                 }
@@ -77,6 +85,10 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+                .environmentObject(locationManager)
         }
         .onAppear {
             locationManager.startTracking()
