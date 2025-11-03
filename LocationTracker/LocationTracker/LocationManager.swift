@@ -10,19 +10,14 @@ import CoreLocation
 import CoreData
 
 class LocationManager: NSObject, ObservableObject {
-    @Published var currentLocation: CLLocation?
     private let locationManager = CLLocationManager()
     private var viewContext: NSManagedObjectContext
-    private var lastLocation: CLLocation?
-    private var lastSaveTime: Date?
-    private var currentSamplingInterval: TimeInterval = 60 // Start with 1 minute
-    private var timer: Timer?
     
-    // Adaptive sampling parameters
-    private let minSamplingInterval: TimeInterval = 10 // 10 seconds
-    private let maxSamplingInterval: TimeInterval = 300 // 5 minutes
-    private let distanceThreshold: CLLocationDistance = 10 // 10 meters
-    private let timeThreshold: TimeInterval = 60 // 1 minute
+    // private var lastSavedLocation: CLLocation?
+    // private var lastSaveTime: Date?
+    
+    // private let distanceThreshold: CLLocationDistance = 10 // 10 meters
+    // private let timeThreshold: TimeInterval = 60 // 1 minute
     
     @Published var isTrackingEnabled: Bool = true {
         didSet {
@@ -33,13 +28,18 @@ class LocationManager: NSObject, ObservableObject {
             }
         }
     }
+    @Published var currentLocation: CLLocation?
 
     init(viewContext: NSManagedObjectContext) {
         self.viewContext = viewContext
         super.init()
         locationManager.delegate = self
+        
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.distanceFilter = 30 // meters
+        
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.pausesLocationUpdatesAutomatically = true
     }
     
     func requestLocationPermission() {
@@ -51,7 +51,6 @@ class LocationManager: NSObject, ObservableObject {
         switch locationManager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
             locationManager.startUpdatingLocation()
-            startPeriodicSampling()
         case .notDetermined:
             requestLocationPermission()
         default:
@@ -61,27 +60,6 @@ class LocationManager: NSObject, ObservableObject {
     
     func stopTracking() {
         locationManager.stopUpdatingLocation()
-        stopPeriodicSampling()
-    }
-    
-    private func startPeriodicSampling() {
-        
-        timer?.invalidate()
-        
-        timer = Timer.scheduledTimer(withTimeInterval: currentSamplingInterval, repeats: true) { _ in
-            self.sampleLocation()
-        }
-    }
-    
-    private func stopPeriodicSampling() {
-        timer?.invalidate()
-        timer = nil
-    }
-    
-    private func sampleLocation() {
-        guard let location = locationManager.location else { return }
-        saveLocation(location)
-        adjustSamplingRate(for: location)
     }
     
     private func saveLocation(_ location: CLLocation) {
@@ -107,42 +85,38 @@ class LocationManager: NSObject, ObservableObject {
             }
         }
     }
-    
-    private func adjustSamplingRate(for location: CLLocation) {
-        guard let lastLocation = self.lastLocation else {
-            self.lastLocation = location
-            return
-        }
-        
-        let distance = location.distance(from: lastLocation)
-        let timeInterval = Date().timeIntervalSince(lastSaveTime ?? Date.distantPast)
-        
-        // Adjust sampling rate based on movement
-        if distance < distanceThreshold && timeInterval < timeThreshold {
-            // User is not moving much, increase sampling interval (less frequent)
-            currentSamplingInterval = min(maxSamplingInterval, currentSamplingInterval * 1.5)
-        } else {
-            // User is moving, decrease sampling interval (more frequent)
-            currentSamplingInterval = max(minSamplingInterval, currentSamplingInterval / 1.5)
-        }
-        
-        // Update timer with new interval
-        stopPeriodicSampling()
-        startPeriodicSampling()
-        
-        self.lastLocation = location
-        self.lastSaveTime = Date()
-        
-        print("Sampling interval adjusted to: \(currentSamplingInterval) seconds")
-    }
 }
 
 extension LocationManager: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let newLocation = locations.last else { return }
+        
+        self.currentLocation = newLocation
+        
+        self.saveLocation(newLocation)
+        
+        // Uncomment the following lines if you want to use the new location immediately
+        
         // This is called when location updates are available
         // We're using our own periodic sampling, so we don't need to do anything here
         // unless we want to use these updates for something else
-        currentLocation = locations.last
+        // self.currentLocation = newLocation
+        
+        // guard let lastLocation = self.lastSavedLocation, let lastTime = self.lastSaveTime else {
+        //    self.saveLocation(newLocation)
+        //    self.lastSavedLocation = newLocation
+        //    self.lastSaveTime = Date()
+        //    return
+        // }
+        
+        // let distance = newLocation.distance(from: lastLocation)
+        // let timeInterval = Date().timeIntervalSince(lastTime)
+        
+        // if distance > distanceThreshold || timeInterval > timeThreshold {
+        //     self.saveLocation(newLocation)
+        //     self.lastSavedLocation = newLocation
+        //     self.lastSaveTime = Date()
+        // }
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
