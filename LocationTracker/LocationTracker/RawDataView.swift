@@ -11,47 +11,41 @@ import CoreData
 struct RawDataView: View {
     @Environment(\.managedObjectContext) private var viewContext
     
-    @State private var selectedDate = Date()
-    @FetchRequest private var locationItems: FetchedResults<Item>
-    @State private var showingDatePicker = false
+    @ObservedObject var dataProvider: DataProvider
     
-    init() {
-        // Configure fetch request to get items for selected date
-        let fetchRequest: NSFetchRequest<Item> = Item.fetchRequest()
-        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \Item.timestamp, ascending: false)]
-        _locationItems = FetchRequest(fetchRequest: fetchRequest)
+    @State private var showingDatePicker = false
+    @Binding var displayMode: MapDisplayMode
+    @Binding private var selectedDate: Date
+    
+    init(dataProvider: DataProvider, displayMode: Binding<MapDisplayMode>, selectedDate: Binding<Date>) {
+        self.dataProvider = dataProvider
+        self._displayMode = displayMode
+        self._selectedDate = selectedDate
     }
     
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
             List {
-                ForEach(locationItems) { item in
-                    VStack(alignment: .leading) {
-                        Text(item.timestamp!, formatter: itemFormatter)
-                            .font(.headline)
-                        #if canImport(CoreData)
-                        // Check if the Item entity has latitude and longitude properties
-                        if item.responds(to: #selector(getter: Item.latitude)) && 
-                           item.responds(to: #selector(getter: Item.longitude)) {
-                            Text("Latitude: \(item.latitude)")
-                                .font(.caption)
-                            Text("Longitude: \(item.longitude)")
-                                .font(.caption)
-                        } else {
-                            Text("Latitude: N/A")
-                                .font(.caption)
-                            Text("Longitude: N/A")
-                                .font(.caption)
-                        }
-                        #else
-                        Text("Latitude: N/A")
-                            .font(.caption)
-                        Text("Longitude: N/A")
-                            .font(.caption)
-                        #endif
+                switch displayMode {
+                case .rawOnly:
+                    Section(header: Text("Raw Samples (\(dataProvider.items.count))")) {
+                        ForEach(dataProvider.items) { item in ItemRowView(item: item) }
                     }
-                    .padding(.vertical, 4)
+                case .placeOnly:
+                    Section(header: Text("Places (\(dataProvider.places.count))")) {
+                        ForEach(dataProvider.places) { place in PlaceRowView(place: place) }
+                    }
+                case .both:
+                    Section(header: Text("Places (\(dataProvider.places.count))")) {
+                        ForEach(dataProvider.places) { place in PlaceRowView(place: place) }
+                    }
+                    Section(header: Text("Raw Samples (\(dataProvider.items.count))")) {
+                        ForEach(dataProvider.items) { item in ItemRowView(item: item) }
+                    }
                 }
+            }
+            .refreshable {
+                dataProvider.fetchData(for: selectedDate)
             }
             
             // Date selector button at the bottom
@@ -70,39 +64,15 @@ struct RawDataView: View {
                 }
                 
                 Spacer()
-                
-                Text("Showing \(locationItems.count) locations")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
             }
             .padding()
             .background(Color(.systemBackground))
         }
-        .navigationTitle("Raw Location Data")
+        .navigationTitle("Data View")
+        .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingDatePicker) {
             DatePickerView(selectedDate: $selectedDate)
         }
-        .onChange(of: selectedDate) { _, newValue in
-            updateFetchRequest(for: newValue)
-        }
-        .onAppear {
-            updateFetchRequest(for: selectedDate)
-        }
-    }
-    
-    private func updateFetchRequest(for date: Date) {
-        let startOfDay = Calendar.current.startOfDay(for: date)
-        let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
-        
-        let fetchRequest: NSFetchRequest<Item> = Item.fetchRequest()
-        fetchRequest.predicate = NSPredicate(
-            format: "timestamp >= %@ AND timestamp < %@",
-            startOfDay as NSDate,
-            endOfDay as NSDate
-        )
-        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \Item.timestamp, ascending: false)]
-        
-        locationItems.nsPredicate = fetchRequest.predicate
     }
     
     private func formattedDate(_ date: Date) -> String {
@@ -112,13 +82,54 @@ struct RawDataView: View {
     }
 }
 
-private let itemFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .medium
-    return formatter
-}()
+struct ItemRowView: View {
+    @ObservedObject var item: Item
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(item.timestamp ?? Date(), style: .time).font(.headline)
+            HStack {
+                Text(String(format: "%.4f, %.4f", item.latitude, item.longitude))
+            }
+            .font(.caption)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct PlaceRowView: View {
+    @ObservedObject var place: Place
+    
+    private var duration: String {
+        guard let start = place.startTime, let end = place.endTime else { return "N/A" }
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute]
+        formatter.unitsStyle = .abbreviated
+        return formatter.string(from: start, to: end) ?? "0m"
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text("Stay for \(duration)")
+                    .font(.headline)
+                HStack {
+                    Text(String(format: "%.4f, %.4f", place.latitude, place.longitude))
+                }
+                .font(.caption)
+                Text("\(place.sampleCount) samples")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
 
 #Preview {
-    RawDataView().environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
+    RawDataView(
+        dataProvider: PersistenceController.preview.dataProvider,
+        displayMode: .constant(.rawOnly),
+        selectedDate: .constant(Date())
+    ).environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
 }

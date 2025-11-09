@@ -10,16 +10,21 @@ import SwiftUI
 @main
 struct LocationTrackerApp: App {
     let persistenceController = PersistenceController.shared
-    @StateObject private var locationManager = LocationManager(viewContext: PersistenceController.shared.container.viewContext)
+    @StateObject private var locationManager: LocationManager
 
+    init() {
+        let context = PersistenceController.shared.container.viewContext
+        _locationManager = StateObject(wrappedValue: LocationManager(viewContext: context))
+        
+        #if DEBUG
+        persistenceController.seedInitialDataIfNeeded()
+        #endif
+    }
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .environmentObject(locationManager)
-                .onAppear {
-                    locationManager.startTracking()
-                }
         }
     }
 }

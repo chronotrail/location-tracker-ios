@@ -7,17 +7,18 @@
 
 import Foundation
 import CoreLocation
+import CoreMotion
 import CoreData
 
 class LocationManager: NSObject, ObservableObject {
     private let locationManager = CLLocationManager()
+    private let motionManager = CMMotionActivityManager()
     private var viewContext: NSManagedObjectContext
+    private let placeExtractor: PlaceExtractor
     
-    // private var lastSavedLocation: CLLocation?
-    // private var lastSaveTime: Date?
-    
-    // private let distanceThreshold: CLLocationDistance = 10 // 10 meters
-    // private let timeThreshold: TimeInterval = 60 // 1 minute
+    private var lastSaveTime: Date?
+    private var lastSavedLocation: CLLocation?
+    private var isContinuousUpdating = false
     
     @Published var isTrackingEnabled: Bool = true {
         didSet {
@@ -29,60 +30,58 @@ class LocationManager: NSObject, ObservableObject {
         }
     }
     @Published var currentLocation: CLLocation?
-
+    
     init(viewContext: NSManagedObjectContext) {
         self.viewContext = viewContext
+        self.placeExtractor = PlaceExtractor(viewContext: viewContext)
         super.init()
+        
         locationManager.delegate = self
-        
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         locationManager.distanceFilter = 30 // meters
-        
+        locationManager.activityType = .otherNavigation
         locationManager.allowsBackgroundLocationUpdates = true
         locationManager.pausesLocationUpdatesAutomatically = true
     }
     
-    func requestLocationPermission() {
+    func requestAuthorization() {
         locationManager.requestAlwaysAuthorization()
+        requestMotionPermission()
     }
     
+    func requestMotionPermission() {
+        guard CMMotionActivityManager.isActivityAvailable() else { return }
+        motionManager.queryActivityStarting(from: Date(), to: Date(), to: .main) { _, error in
+            if let error = error {
+                print("⚠️ Motion permission not granted: \(error.localizedDescription)")
+            } else {
+                print("✅ Motion permission granted or already authorized")
+            }
+        }
+    }
+
     func startTracking() {
-        guard isTrackingEnabled else { return }
+        guard CLLocationManager.locationServicesEnabled() else { return }
         switch locationManager.authorizationStatus {
-        case .authorizedWhenInUse, .authorizedAlways:
-            locationManager.startUpdatingLocation()
+        case .authorizedAlways, .authorizedWhenInUse:
+            startContinuousUpdates()
         case .notDetermined:
-            requestLocationPermission()
+            requestAuthorization()
         default:
-            print("Location permission not granted")
+            print("⚠️ Location permission not granted")
         }
     }
     
     func stopTracking() {
-        locationManager.stopUpdatingLocation()
+        stopContinuousUpdates()
+        stopMonitoringSignificantChanges()
+        stopRegionMonitoring()
     }
     
-    private func saveLocation(_ location: CLLocation) {
-        DispatchQueue.main.async {
-            let newItem = Item(context: self.viewContext)
-            newItem.timestamp = Date()
-            
-            // Once latitude and longitude properties are added to Item entity
-            #if canImport(CoreData)
-            // Check if the Item entity has latitude and longitude properties
-            if newItem.responds(to: #selector(setter: Item.latitude)) && 
-               newItem.responds(to: #selector(setter: Item.longitude)) {
-                newItem.latitude = location.coordinate.latitude
-                newItem.longitude = location.coordinate.longitude
-            }
-            #endif
-            
-            do {
-                try self.viewContext.save()
-                print("Location saved: \(location.coordinate.latitude), \(location.coordinate.longitude)")
-            } catch {
-                print("Failed to save location: \(error)")
-            }
+    func refreshCurrentLocation() {
+        if CLLocationManager.locationServicesEnabled() {
+            print("📍 Requesting one-time location refresh on launch")
+            locationManager.requestLocation()
         }
     }
 }
@@ -90,45 +89,128 @@ class LocationManager: NSObject, ObservableObject {
 extension LocationManager: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let newLocation = locations.last else { return }
+        guard newLocation.horizontalAccuracy >= 0 && newLocation.horizontalAccuracy <= 100 else {
+            print("Discarding inaccurate location. Accuracy: \(newLocation.horizontalAccuracy)")
+            return
+        }
         
-        self.currentLocation = newLocation
+        let now = newLocation.timestamp
+        let speed = max(newLocation.speed, 0)
+        let movedDistance = newLocation.distance(from: lastSavedLocation ?? newLocation)
+
+        var minInterval: TimeInterval
+        if speed > 5 || movedDistance > 100 {
+            // Moving fast → sample frequently
+            minInterval = 30     // seconds
+        } else if speed > 1.5 || movedDistance > 30 {
+            // Walking → moderate
+            minInterval = 90
+        } else {
+            // Stationary → slow
+            minInterval = 300    // 5 minutes
+        }
+
+        if let last = lastSaveTime, now.timeIntervalSince(last) < minInterval {
+            queryRecentActivityAndAdjustMode()
+            return
+        }
         
-        self.saveLocation(newLocation)
+        currentLocation = newLocation
+        saveLocation(newLocation)
+        placeExtractor.processNewLocation(newLocation)
         
-        // Uncomment the following lines if you want to use the new location immediately
+        lastSaveTime = now
+        lastSavedLocation = newLocation
         
-        // This is called when location updates are available
-        // We're using our own periodic sampling, so we don't need to do anything here
-        // unless we want to use these updates for something else
-        // self.currentLocation = newLocation
-        
-        // guard let lastLocation = self.lastSavedLocation, let lastTime = self.lastSaveTime else {
-        //    self.saveLocation(newLocation)
-        //    self.lastSavedLocation = newLocation
-        //    self.lastSaveTime = Date()
-        //    return
-        // }
-        
-        // let distance = newLocation.distance(from: lastLocation)
-        // let timeInterval = Date().timeIntervalSince(lastTime)
-        
-        // if distance > distanceThreshold || timeInterval > timeThreshold {
-        //     self.saveLocation(newLocation)
-        //     self.lastSavedLocation = newLocation
-        //     self.lastSaveTime = Date()
-        // }
+        queryRecentActivityAndAdjustMode()
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("Location manager failed with error: \(error)")
     }
     
-    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        switch status {
-        case .authorizedWhenInUse, .authorizedAlways:
-            startTracking()
-        default:
-            stopTracking()
+    func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        guard region.identifier == "stay-region" else { return }
+        print("🚶 Exited stay region — switching to continuous updates")
+        stopRegionMonitoring()
+        startContinuousUpdates()
+    }
+}
+
+private extension LocationManager {
+    func saveLocation(_ location: CLLocation) {
+        let item = Item(context: viewContext)
+        item.timestamp = location.timestamp
+        item.latitude = location.coordinate.latitude
+        item.longitude = location.coordinate.longitude
+        try? viewContext.save()
+    }
+    
+    func startContinuousUpdates() {
+        guard !isContinuousUpdating else { return }
+        
+        print("🚗 Switching to continuous updates")
+        stopMonitoringSignificantChanges()
+        stopRegionMonitoring()
+        
+        locationManager.startUpdatingLocation()
+        isContinuousUpdating = true
+    }
+    
+    func stopContinuousUpdates() {
+        guard isContinuousUpdating else { return }
+        
+        print("🧘 Switching to significant change updates")
+        locationManager.stopUpdatingLocation()
+
+        startMonitoringSignificantChanges()
+        if let loc = currentLocation {
+            startStayRegion(at: loc)
+        }
+        isContinuousUpdating = false
+    }
+    
+    func startMonitoringSignificantChanges() {
+        guard CLLocationManager.significantLocationChangeMonitoringAvailable() else { return }
+        locationManager.startMonitoringSignificantLocationChanges()
+    }
+    
+    func stopMonitoringSignificantChanges() {
+        locationManager.stopMonitoringSignificantLocationChanges()
+    }
+    
+    func queryRecentActivityAndAdjustMode() {
+        guard CMMotionActivityManager.isActivityAvailable() else { return }
+
+        motionManager.queryActivityStarting(from: Date(timeIntervalSinceNow: -30), to: Date(), to: .main) { [weak self] activities, _ in
+            guard let self = self, let activity = activities?.last else { return }
+
+            let isMoving = activity.automotive || activity.cycling || activity.running || activity.walking
+            if isMoving && !self.isContinuousUpdating {
+                self.startContinuousUpdates()
+            } else if !isMoving && self.isContinuousUpdating {
+                self.stopContinuousUpdates()
+            }
+        }
+    }
+    
+    func startStayRegion(at location: CLLocation) {
+        stopRegionMonitoring() // clear previous region
+        let region = CLCircularRegion(
+            center: location.coordinate,
+            radius: 120, // meters (minimum reliable radius)
+            identifier: "stay-region"
+        )
+        region.notifyOnExit = true
+        region.notifyOnEntry = false
+        locationManager.startMonitoring(for: region)
+        print("📍 Geofence set at (\(location.coordinate.latitude), \(location.coordinate.longitude))")
+    }
+    
+    func stopRegionMonitoring() {
+        for region in locationManager.monitoredRegions where region.identifier == "stay-region" {
+            locationManager.stopMonitoring(for: region)
+            print("🧹 Removed stay region")
         }
     }
 }

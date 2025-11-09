@@ -6,5 +6,7 @@
 	<array>
 		<string>location</string>
 	</array>
+    <key>NSMotionUsageDescription</key>
+    <string>This app uses motion activity to detect whether you are walking, driving, or stationary for battery-efficient location tracking.</string>
 </dict>
 </plist>

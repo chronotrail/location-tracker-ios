@@ -11,13 +11,27 @@ struct PersistenceController {
     static let shared = PersistenceController()
 
     @MainActor
-    static let preview: PersistenceController = {
+    static var preview: PersistenceController = {
         let result = PersistenceController(inMemory: true)
         let viewContext = result.container.viewContext
-        for _ in 0..<10 {
+        
+        // Create a sample Place for today
+        let newPlace = Place(context: viewContext)
+        newPlace.startTime = Date().addingTimeInterval(-3600) // An hour ago
+        newPlace.endTime = Date()
+        newPlace.latitude = 33.7962
+        newPlace.longitude = -118.1113
+        newPlace.sampleCount = 12
+
+        // Create a few sample Items for today
+        for i in 0..<5 {
             let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
+            newItem.timestamp = Date().addingTimeInterval(TimeInterval(-i * 120)) // Every 2 minutes
+            newItem.latitude = 33.7962 + Double.random(in: -0.001...0.001)
+            newItem.longitude = -118.1113 + Double.random(in: -0.001...0.001)
+            newItem.processed = (i < 2) // Mark some as processed
         }
+        
         do {
             try viewContext.save()
         } catch {
@@ -26,10 +40,15 @@ struct PersistenceController {
             let nsError = error as NSError
             fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
         }
+        
+        result.dataProvider.fetchData(for: Date())
+        
         return result
     }()
-
+    
     let container: NSPersistentContainer
+    
+    let dataProvider: DataProvider
 
     init(inMemory: Bool = false) {
         container = NSPersistentContainer(name: "LocationTracker")
@@ -53,5 +72,43 @@ struct PersistenceController {
             }
         })
         container.viewContext.automaticallyMergesChangesFromParent = true
+        
+        dataProvider = DataProvider(viewContext: container.viewContext)
+    }
+    
+    func seedInitialDataIfNeeded() {
+        #if DEBUG
+        let hasSeededKey = "hasSeededInitialData"
+        let hasSeeded = UserDefaults.standard.bool(forKey: hasSeededKey)
+        guard !hasSeeded else { return }
+        let viewContext = container.viewContext
+        print("Seeding initial data...")
+        
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let place = Place(context: viewContext)
+        place.startTime = yesterday.addingTimeInterval(-3600) // An hour ago
+        place.endTime = yesterday
+        place.latitude = 33.7962
+        place.longitude = -118.1113
+        place.sampleCount = 12
+
+        // Create a few sample Items for today
+        for i in 0..<5 {
+            let newItem = Item(context: viewContext)
+            newItem.timestamp = Date().addingTimeInterval(TimeInterval(-i * 120)) // Every 2 minutes
+            newItem.latitude = 33.7962 + Double.random(in: -0.001...0.001)
+            newItem.longitude = -118.1113 + Double.random(in: -0.001...0.001)
+            newItem.processed = false
+        }
+        
+        do {
+            try viewContext.save()
+            UserDefaults.standard.set(true, forKey: hasSeededKey)
+            print("Successfully seeded initial data.")
+        } catch {
+            let nsError = error as NSError
+            print("Error seeding initial data: \(nsError), \(nsError.userInfo)")
+        }
+        #endif
     }
 }
